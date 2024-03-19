@@ -680,12 +680,7 @@ plot(roc_curve, main = "ROC Curve", col = "blue")
 cutoff <- coords(roc_curve, "best", best.method = "closest.topleft")
 
 cutoff
-precision <- conf_matrix$table[2, 2] / sum(conf_matrix$table[, 2])
-recall <- conf_matrix$table[2, 2] / sum(conf_matrix$table[2, ])
-f1_score <- 2 * (precision * recall) / (precision + recall)
 
-
-print(f1_score)
 ```
 
 
@@ -716,6 +711,7 @@ test_label <- label[-trainIndex]
 xgb_model <- xgboost(data = train_X, label = train_label, objective = "binary:logistic", nrounds=10)
 
 predictions <- predict(xgb_model, newdata = test_X)
+auroc <- roc(test_label, predictions)
 cutoff <- coords(auroc, "best", best.method = "closest.topleft")
 
 
@@ -726,7 +722,7 @@ accuracy
 conf_matrix <- confusionMatrix(as.factor(predicted_labels), as.factor(test_label))
 conf_matrix$table
 
-auroc <- roc(test_label, predictions)
+
 auroc
 
 cutoff
