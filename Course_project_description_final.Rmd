@@ -1,0 +1,1702 @@
+---
+title: "Course Project Description"
+date: " "
+output: html_document
+---
+
+## Overview
+
+This document contains instructions on the **course project** for STA 141A Winter 2024. This document is made with `R markdown`. The `rmd` file to generate this document is available on the course website. 
+
+# Background
+
+
+In this project, we analyze a subset of data collected by Steinmetz et al. (2019). While this document provides the basic understanding of the experiments, it is highly recommended that one consults the original publication for a more comprehensive understanding in order to improve the quality of the analysis report.
+
+
+In the study conducted by Steinmetz et al. (2019), experiments were performed on a total of 10 mice over 39 sessions. Each session comprised several hundred trials, during which visual stimuli were randomly presented to the mouse on two screens positioned on both sides of it. The stimuli varied in terms of contrast levels, which took values in {0, 0.25, 0.5, 1}, with 0 indicating the absence of a stimulus. The mice were required to make decisions based on the visual stimuli, using a wheel controlled by their forepaws. A reward or penalty (i.e., feedback) was subsequently administered based on the outcome of their decisions. In particular, 
+
+- When left contrast > right contrast, success (1) if turning the wheel to the right and failure (-1) otherwise.  
+- When right contrast > left contrast, success (1) if turning the wheel to the left and failure (-1) otherwise.  
+- When both left and right contrasts are zero, success (1) if holding the wheel still and failure (-1) otherwise. 
+- When left and right contrasts are equal but non-zero, left or right will be randomly chosen (50%) as the correct choice. 
+
+
+The activity of the neurons in the mice's visual cortex was recorded during the trials and made available in the form of spike trains, which are collections of timestamps corresponding to neuron firing. In this project, we focus specifically on the spike trains of neurons from the onset of the stimuli to 0.4 seconds post-onset. In addition, we only use 18 sessions (Sessions 1 to 18) from four mice: Cori, Frossman, Hence, and Lederberg.
+
+
+# Data structure 
+
+---
+
+A total of 18 RDS files are provided that contain the records from 18 sessions. In each RDS file, you can find the name of mouse from `mouse_name` and date of the experiment from `date_exp`. 
+
+
+```{r echo=TRUE, eval=TRUE}
+
+session=list()
+for(i in 1:18){
+  session[[i]]=readRDS(paste('./Data/session',i,'.rds',sep=''))
+  # print(session[[i]]$mouse_name)
+  # print(session[[i]]$date_exp)
+  
+}
+library(tidyverse)
+```
+
+Five variables are available for each trial, namely 
+
+- `feedback_type`: type of the feedback, 1 for success and -1 for failure
+- `contrast_left`: contrast of the left stimulus
+- `contrast_right`: contrast of the right stimulus
+- `time`: centers of the time bins for `spks`  
+- `spks`: numbers of spikes of neurons in the visual cortex in time bins defined in `time`
+- `brain_area`: area of the brain where each neuron lives
+```{r}
+ls(session[[1]])
+
+summary(session[[1]]$brain_area)
+
+table(session[[1]]$brain_area)
+
+#behavioral data
+summary(session[[1]]$contrast_left)
+table(session[[1]]$contrast_left)
+length(session[[1]]$contrast_left)
+
+table(session[[1]]$contrast_right)
+length(session[[1]]$contrast_right)
+
+summary(session[[1]]$feedback_type)
+table(session[[1]]$feedback_type)
+
+#neural data
+typeof(session[[1]]$spks)
+length(session[[1]]$spks)
+dim(session[[1]]$spks[[10]])#the number of neurons 734 by the number of time bins 40
+length(session[[1]]$spks[[10]][5,])
+session[[1]]$time[[10]]
+
+session[[1]]$feedback_type[10]
+```
+
+Take the 11th trial in Session 5 for example, we can see that the left contrast for this trial is `r 
+session[[5]]$contrast_left[11]`  the right contrast is `r 
+session[[5]]$contrast_right[11]`, and the feedback (i.e., outcome) of the trial is `r session[[5]]$feedback_type[11]`. There are a total of `r length(session[[5]]$brain_area)` neurons in this trial from `r length(unique(session[[5]]$brain_area))` areas of the brain. The spike trains of these neurons are stored in `session[[5]]$spks[[11]]` which is a `r dim(session[[5]]$spks[[11]])[1]` by `r dim(session[[5]]$spks[[11]])[2]` matrix with each entry being the number of spikes of one neuron (i.e., row) in each time bin (i.e., column).
+
+
+# Question of interest
+
+
+The primary objective of this project is to build a predictive model to predict the outcome (i.e., feedback type) of each trial using the neural activity data (i.e., spike trains in `spks`), along with the stimuli (the left and right contrasts). Given the complexity of the data (and that this is a course project), we break the predictive modeling into three parts as follows. 
+
+Part 1. Exploratory data analysis. In this part, we will explore the features of the data sets in order to build our prediction model. In particular, we would like to (i) describe the data structures across sessions (e.g., number of neurons, number of trials, stimuli conditions, feedback types), (ii) explore the neural activities during each trial, (iii) explore the changes across trials, and (iv) explore homogeneity and heterogeneity across sessions and mice. 
+
+```{r}
+#Find average spike
+i.s=18 
+
+i.t=i  
+
+
+average_spike_session <- function(i.s, this_session) {
+  num_trials <- length(this_session$spks)
+  area <- this_session$brain_area
+  
+  
+  spk_count_accumulated <- numeric(length = length(area))
+  
+ 
+  for (i in 1:num_trials) {
+    spk_trial <- this_session$spks[[i]] 
+    
+    
+    spk_count <- apply(spk_trial, 1, sum)
+    means<-mean(spk_count)
+    
+
+    spk_count_accumulated <- spk_count_accumulated + spk_count
+  }
+  
+ 
+  spk_average <- tapply(spk_count_accumulated, area, mean)
+  spk_average<-sum(spk_average)
+  
+  return(spk_average)
+}
+
+
+average_spike_session(i.s, this_session = session[[i.s]])
+
+
+average_spike_per_session <- function(i.s, this_session) {
+  num_trials <- length(this_session$spks)  
+  area <- this_session$brain_area
+  
+  spk_count_accumulated <- numeric(length = length(area))
+  
+
+  for (i in 1:num_trials) {
+    spk_trial <- this_session$spks[[i]] 
+
+
+    spk_count <- apply(spk_trial, 1, sum)  
+    spk_count_accumulated <- spk_count_accumulated + spk_count
+}   
+    
+    spk_mean <- tapply(spk_count_accumulated, area, mean)
+    
+  
+
+    
+
+  
+
+}
+
+
+
+average_spike_per_session(i.s, this_session = session[[i.s]])
+
+```
+```{r}
+#average spike per trial and total spike per session
+calculate_spikes_session <- function(session_data) {
+  n_obs <- length(session_data$feedback_type)
+  
+  dat <- tibble(
+    feedback_type = as.factor(session_data$feedback_type),
+    decision = rep('name', n_obs),
+    avg_spikes = rep(0, n_obs),
+    total_spikes = rep(0, n_obs)
+  )
+  
+  for (i in 1:n_obs) {
+    # Determine decision based on contrasts
+    if (session_data$contrast_left[i] > session_data$contrast_right[i]) {
+      dat$decision[i] <- '1' 
+    } else if (session_data$contrast_left[i] < session_data$contrast_right[i]) {
+      dat$decision[i] <- '2' 
+    } else if (session_data$contrast_left[i] == session_data$contrast_right[i] &
+                 session_data$contrast_left[i] == 0) {
+      dat$decision[i] <- '3' 
+    } else {
+      dat$decision[i] <- '4' 
+    }
+    
+    
+    spks.trial <- session_data$spks[[i]]
+    total.spikes <- apply(spks.trial, 1, sum)
+    
+    dat$total_spikes[i] <- sum(total.spikes)
+    dat$avg_spikes[i] <- mean(total.spikes)
+    
+  }
+  
+  dat$decision <- as.factor(dat$decision)
+  
+  return(list(avg_spikes = mean(dat$avg_spikes), total_spikes = sum(dat$total_spikes)))
+}
+
+
+session_number <- 18  
+result <- calculate_spikes_session(session[[session_number]])
+
+
+print(result$avg_spikes)
+print(result$total_spikes/i)
+
+```
+
+
+
+
+```{r}
+#Create table with neurons trials success rate, spike number and spike per area
+library(tidyverse)
+
+
+n.session=length(session)
+
+meta <- tibble(
+  mouse_name = rep('name',n.session),
+  date_exp =rep('dt',n.session),
+  n_brain_area = rep(0,n.session),
+  n_neurons = rep(0,n.session),
+  n_trials = rep(0,n.session),
+  success_rate = rep(0,n.session),
+  spike_number = rep(0,n.session),
+  average_spike=rep(0,n.session),
+  spike_per_area=rep(0,n.session)
+  
+
+)
+
+
+for(i in 1:n.session){
+  tmp = session[[i]];
+  meta[i,1]=tmp$mouse_name;
+  meta[i,2]=tmp$date_exp;
+  meta[i,3]=length(unique(tmp$brain_area));
+  meta[i,4]=dim(tmp$spks[[1]])[1];
+  meta[i,5]=length(tmp$feedback_type);
+  meta[i,6]=mean(tmp$feedback_type+1)/2;
+  spike_info<-calculate_spikes_session(tmp)
+  meta[i, "spike_number"] <-( spike_info$total_spikes/meta[i,"n_trials"]);
+  
+  meta[i, "average_spike"] <- spike_info$avg_spikes;
+  meta[i, "spike_per_area"]<-meta[i,"spike_number"]/meta[i,"n_brain_area"];
+
+  
+}
+ 
+
+
+
+
+library(knitr)
+# In package knitr
+
+library(dplyr)
+meta %>% rename(brain_area = n_brain_area, neuron_count = n_neurons,trial_count = n_trials )
+
+summary(meta$success_rate)
+summary(meta$average_spike)
+summary(meta$spike_number)
+```
+
+
+
+
+
+```{r}
+#total and average spike per trial
+calculate_spikes_trial <- function(session_data, i.t) {
+  n_obs <- length(session_data$feedback_type)
+  
+  dat <- tibble(
+    feedback_type = as.factor(session_data$feedback_type),
+    decision = rep('name', n_obs),
+    avg_spikes = rep(0, n_obs),
+    total_spikes = rep(0, n_obs)
+  )
+  
+  for (i in 1:n_obs) {
+    # Determine decision based on contrasts
+    if (session_data$contrast_left[i] > session_data$contrast_right[i]) {
+      dat$decision[i] <- '1' 
+    } else if (session_data$contrast_left[i] < session_data$contrast_right[i]) {
+      dat$decision[i] <- '2' 
+    } else if (session_data$contrast_left[i] == session_data$contrast_right[i] &
+                 session_data$contrast_left[i] == 0) {
+      dat$decision[i] <- '3' 
+    } else {
+      dat$decision[i] <- '4' 
+    }
+    
+
+    spks.trial <- session_data$spks[[i]]
+    total.spikes <- apply(spks.trial, 1, sum)
+    
+    dat$total_spikes[i] <- sum(total.spikes)
+    dat$avg_spikes[i] <- mean(total.spikes)
+    
+  }
+  
+  dat$decision <- as.factor(dat$decision)
+  
+  return(dat)
+}
+
+session_number <- 18  
+result <- calculate_spikes_trial(session[[session_number]])
+
+
+print(result)
+
+```
+
+
+
+
+
+```{r}
+average_spike_area<-function(i.t,this_session){
+  spk.trial = this_session$spks[[i.t]]
+  area= this_session$brain_area
+  spk.count=apply(spk.trial,1,sum)
+  spk.average.tapply=tapply(spk.count, area, mean)
+  return(spk.average.tapply)
+  }
+
+# Test the function
+average_spike_area(1,this_session = session[[i.s]])
+#Average spike per brain area
+library(tidyverse)
+i.s=1
+n.trial=length(session[[i.s]]$feedback_type)
+n.area=length(unique(session[[i.s]]$brain_area ))
+
+trial.summary =matrix(nrow=n.trial,ncol= n.area+1+2+1)
+for(i.t in 1:n.trial){
+  trial.summary[i.t,]=c(average_spike_area(i.t,this_session = session[[i.s]]),
+                          session[[i.s]]$feedback_type[i.t],
+                        session[[i.s]]$contrast_left[i.t],
+                        session[[i.s]]$contrast_right[i.s],
+                        i.t)
+}
+
+colnames(trial.summary)=c(names(average_spike_area(i.t,this_session = session[[i.s]])), 'feedback', 'left contr.','right contr.','id' )
+
+# Turning it into a data frame
+trial.summary <- as_tibble(trial.summary)
+head(trial.summary)
+summary(trial.summary$ACA)
+summary(trial.summary$CA3)
+summary(trial.summary$DG)
+summary(trial.summary$LS)
+summary(trial.summary$MOs)
+summary(trial.summary$root)
+summary(trial.summary$SUB)
+summary(trial.summary$VISp)
+summary(trial.summary$feedback)
+summary(trial.summary$`left contr.`)
+summary(trial.summary$`right contr.`)
+```
+
+
+```{r}
+#graphs for each session plotting the spikes per brain area
+for (i.s in 1:length(session)) {
+  n.trial <- length(session[[i.s]]$feedback_type)
+  n.area <- length(unique(session[[i.s]]$brain_area))
+  area.col <- rainbow(n = n.area, alpha = 0.7)
+  
+  
+
+  trial_summary <- matrix(nrow = n.trial, ncol = n.area + 1 + 2 + 1)
+  for (i.t in 1:n.trial) {
+    trial_summary[i.t,] <- c(average_spike_area(i.t, session[[i.s]]),
+                             session[[i.s]]$feedback_type[i.t],
+                             session[[i.s]]$contrast_left[i.t],
+                             session[[i.s]]$contrast_right[i.t],
+                             i.t)
+  }
+  colnames(trial_summary) <- c(names(average_spike_area(i.t, session[[i.s]])), 
+                                'feedback', 'left contr.', 'right contr.', 'id')
+  
+  
+  plot(x = 1, y = 0, col = 'white', xlim = c(0, n.trial), ylim = c(0, 6), 
+       xlab = "Trials", ylab = "Average spike counts", 
+       main = paste("Spikes per area in Session", i.s))
+  
+  
+  for (i in 1:n.area) {
+
+    avg_spike_counts <- trial_summary[, i]
+    
+   
+    lines(y = avg_spike_counts, x = trial_summary[, 'id'], col = area.col[i], lty = 2, lwd = 1)
+    
+    lines(smooth.spline(trial_summary[, 'id'], avg_spike_counts), col = area.col[i], lwd = 3)
+  }
+
+ 
+  legend("topright", 
+         legend = colnames(trial_summary)[1:n.area], 
+         col = area.col, 
+         lty = 1, 
+         cex = 0.8
+  )
+  
+}
+#eda describe what you find
+#Data integration have a tidy data that contains info from a trial,data=single trial, outcome=fail or success, wbat columns of data frame,show that from eda what specific trial used for training data to predict trials from session 1-18, if they have special patterns don't use trials from every session, show insight of how do you select data to be in training data, feature constructoin? ONly graded on compare 2 different models show which one is better and why, don't compare 2 different models (logistic vs fancy classification model), if u do logistic explore what can be used as features, logistic can only deal with linear relationship between covariance, can't deal with polynomials, play with features of baseline can do transformations/polynomials, if variaton too much choose lasso or logistic regression, if lasso ur model has less coefficients than features, can compare lasso and naive regression, high score=explore data structure in more detail, use insights to build a good feature, model must be able to handle training data
+```
+```{r}
+
+#look for more spikes where there are more neurons/ divide neuron/spike, loook at brain area of each session, average spike rate (each brain area get neuron/spike), drew plot with areas of each session, x axis is each session, y axis is brain areas, one's that are more dense are almost recorded for all sessions, estimate success rate over different groups(session and mouse) look at success rate of each mouse, look at difference among each trial contrast so absolute value between left and right contrast, mouse behave better if more difference if contrast are farther apart, print contrast difference and success rate, use anova to see success rate vs contrast difference, get significane level and coefficients of how much the contrast makes to success, make a table with mouse and contrast differential and their success rate, visualize success rate change over time(trial), and neural spike over time,
+```
+
+
+
+```{r}
+
+plot.trial<-function(i.t,area, area.col,this_session){
+    
+    spks=this_session$spks[[i.t]];
+    n.neuron=dim(spks)[1]
+    time.points=this_session$time[[i.t]]
+    
+    plot(0,0,xlim=c(min(time.points),max(time.points)),ylim=c(0,n.neuron+1),col='white', xlab='Time (s)',yaxt='n', ylab='Neuron', main=paste('Trial ',i.t, 'feedback', this_session$feedback_type[i.t] ),cex.lab=1.5)
+    for(i in 1:n.neuron){
+        i.a=which(area== this_session$brain_area[i]);
+        col.this=area.col[i.a]
+        
+        ids.spike=which(spks[i,]>0) # find out when there are spikes 
+        if( length(ids.spike)>0 ){
+            points(x=time.points[ids.spike],y=rep(i, length(ids.spike) ),pch='.',cex=2, col=col.this)
+        }
+      
+            
+    }
+    
+legend("topright", 
+  legend = area, 
+  col = area.col, 
+  pch = 16, 
+  cex = 0.8
+  )
+}
+
+```
+
+```{r, fig.width=8, fig.height=8}
+varname=names(trial.summary);
+area=varname[1:(length(varname)-4)]
+plot.trial(1,area, area.col,session[[i.s]])
+plot.trial(1,area, area.col,session[[3]])
+```
+```{r, fig.width=8, fig.height=8}
+varname=names(trial.summary);
+area=varname[1:(length(varname)-4)]
+par(mfrow=c(1,2))
+plot.trial(1,area, area.col,session[[i.s]])
+plot.trial(2,area, area.col,session[[i.s]])
+
+par(mfrow=c(1,1))
+
+```
+```{r}
+#find brain area and average brain areas
+n.session=length(session)
+
+n_success = 0
+n_trial = 0
+for(i in 1:n.session){
+    tmp = session[[i]];
+    n_trial = n_trial + length(tmp$feedback_type);
+    n_success = n_success + sum(tmp$feedback_type == 1);
+}
+n_success/n_trial
+
+area = c()
+for(i in 1:n.session){
+    tmp = session[[i]];
+    area = c(area, unique(tmp$brain_area))
+}
+
+area = unique(area)
+length(area)
+```
+
+
+Part 2. Data integration. Using the findings in Part 1, we will propose an approach to combine data across trials by (i) extracting the shared patters across sessions and/or (ii) addressing the differences between sessions. The goal of this part is to enable the borrowing of information across sessions to enhance the prediction performance in Part 3. 
+
+```{r}
+#New table with contrast differences trial group
+calculate_spikes_trial <- function(session_data, i.s) {
+  n_obs <- length(session_data$feedback_type)
+  
+  dat <- tibble(
+    session_id = rep(i.s, n_obs),
+    mouse_name = rep(session_data$mouse_name[1], n_obs),
+    trial_id = 1:n_obs,
+    feedback_type = as.factor(session_data$feedback_type),
+    decision = rep('name', n_obs),
+    avg_spikes = rep(0, n_obs),
+    left_contrast = rep(0, n_obs),
+    right_contrast = rep(0, n_obs),
+    contrast_diff=rep(0,n_obs),
+    dat=rep(0,n_obs),
+    trial_group=rep(0,n_obs)
+    
+  )
+  
+  for (i in 1:n_obs) {
+    # Determine decision based on contrasts
+    if (session_data$contrast_left[i] > session_data$contrast_right[i]) {
+      dat$decision[i] <- '1' 
+    } else if (session_data$contrast_left[i] < session_data$contrast_right[i]) {
+      dat$decision[i] <- '2' 
+    } else if (session_data$contrast_left[i] == session_data$contrast_right[i] &
+                 session_data$contrast_left[i] == 0) {
+      dat$decision[i] <- '3' 
+    } else {
+      dat$decision[i] <- '4' 
+    }
+    
+    dat$left_contrast[i] <- session_data$contrast_left[i]
+    dat$right_contrast[i] <- session_data$contrast_right[i]
+    dat$contrast_diff[i] <- abs(dat$left_contrast[i] - dat$right_contrast[i])
+
+        spks.trial <- session_data$spks[[i]]
+    total.spikes <- apply(spks.trial, 1, sum)
+    dat$success <- dat$feedback_type == 1
+dat$success <- as.numeric(dat$success)
+ 
+    dat$trial_group[i] = cut(dat$trial_id[i], breaks = seq(0, max(dat$trial_id)+50, by = 25),include.lowest = TRUE)
+levels(dat$trial_group) <- seq(0, max(dat$trial_id), by = 25)[-1]
+    dat$avg_spikes[i] <- mean(total.spikes)
+  }
+  
+  dat$decision <- as.factor(dat$decision)
+  
+  return(dat)
+}
+
+# Example usage:
+calculate_spikes_trial(session[[1]], 1)
+calculate_spikes_trial(session[[2]], 2)
+calculate_spikes_trial(session[[3]], 3)
+calculate_spikes_trial(session[[4]], 4)
+calculate_spikes_trial(session[[5]], 5)
+calculate_spikes_trial(session[[6]], 6)
+calculate_spikes_trial(session[[7]], 7)
+calculate_spikes_trial(session[[8]], 8)
+calculate_spikes_trial(session[[9]], 9)
+calculate_spikes_trial(session[[10]], 10)
+calculate_spikes_trial(session[[11]], 11)
+calculate_spikes_trial(session[[12]], 12)
+calculate_spikes_trial(session[[13]], 13)
+calculate_spikes_trial(session[[14]], 14)
+calculate_spikes_trial(session[[15]], 15)
+calculate_spikes_trial(session[[16]], 16)
+calculate_spikes_trial(session[[17]], 17)
+calculate_spikes_trial(session[[18]], 18)
+
+
+```
+
+
+
+
+```{r}
+#Look at relationship between mouse name and contrast difference
+result_list <- lapply(1:18, function(i) calculate_spikes_trial(session[[i]], i))
+
+combined_dat <- bind_rows(result_list)
+combined_dat %>% group_by(mouse_name) %>% summarize(success_rate = mean(success, na.rm = TRUE))
+head(combined_dat)
+combined_dat%>% group_by(contrast_diff) %>% summarize(success_rate = mean(success, na.rm = TRUE))
+
+counts_df <- combined_dat[c('mouse_name', 'contrast_diff')]
+counts_df$contrast_diff <- as.factor(counts_df$contrast_diff)
+counts <- table(counts_df)
+
+percentages <- prop.table(counts, margin = 1)
+percentages
+```
+
+```{r}
+
+#Anova test between contrast diff and mouse name
+
+combined_dat$contrast_diff <- as.factor(combined_dat$contrast_diff)
+
+anova_result <- aov(success ~ mouse_name * contrast_diff, data = combined_dat)
+
+summary(anova_result)
+```
+
+```{r}
+#Anova for trial group
+combined_dat$trial_group = cut(combined_dat$trial_id, breaks = seq(0, max(combined_dat$trial_id), by = 25),include.lowest = TRUE)
+levels(combined_dat$trial_group) <- seq(0, max(combined_dat$trial_id), by = 25)[2:18]
+combined_dat %>% group_by(trial_group) %>% summarize(success_rate = mean(success, na.rm = TRUE))
+
+combined_dat$trail_group <- as.factor(combined_dat$trial_group)
+combined_dat
+anova_result <- aov(success ~ trial_group*mouse_name , data = combined_dat)
+anova_result2 <- aov(success ~ trial_group*contrast_diff , data = combined_dat)
+
+summary(anova_result)
+summary(anova_result2)
+```
+
+
+
+
+Part 3. Model training and prediction. Finally, we will build a prediction model to predict the outcome (i.e., feedback types). The performance will be evaluated on two test sets of 100 trials randomly selected from Session 1 and Session 18, respectively. The test sets will be released on the day of submission when you need to evaluate the performance of your model. 
+
+
+
+```{r}
+#logistic model
+model <- glm(feedback_type ~  contrast_diff+ trial_group + avg_spikes+mouse_name , data = combined_dat, family = binomial)
+summary(model)
+
+library(pROC)
+combined_dat <- combined_dat[complete.cases(combined_dat$trial_group), ]
+roc_curve <- roc(combined_dat$feedback_type, fitted(model))
+plot(roc_curve, main = "ROC Curve", col = "blue")
+
+
+cutoff <- coords(roc_curve, "best", best.method = "closest.topleft")
+
+cutoff
+
+```
+
+```{r}
+#logistic model with only sessions 1 and 18
+filtered_data <- combined_dat %>%
+  filter(session_id %in% c(1, 18))
+
+
+
+
+model <- glm(feedback_type ~ contrast_diff+ trial_group + avg_spikes+mouse_name  , data = filtered_data, family = binomial)
+summary(model)
+
+
+filtered_data <- filtered_data[complete.cases(filtered_data$trial_group), ]
+roc_curve <- roc(filtered_data$feedback_type, fitted(model))
+plot(roc_curve, main = "ROC Curve", col = "blue")
+
+
+cutoff <- coords(roc_curve, "best", best.method = "closest.topleft")
+
+cutoff
+```
+
+```{r}
+#logistic model with mouse name data
+filtered_data <- combined_dat %>%
+  filter(session_id %in% c(1:3, 12:18))
+
+
+
+
+model <- glm(feedback_type ~ contrast_diff+ trial_group + avg_spikes+mouse_name  , data = filtered_data, family = binomial)
+summary(model)
+
+
+filtered_data <- filtered_data[complete.cases(filtered_data$trial_group), ]
+roc_curve <- roc(filtered_data$feedback_type, fitted(model))
+plot(roc_curve, main = "ROC Curve", col = "blue")
+
+
+cutoff <- coords(roc_curve, "best", best.method = "closest.topleft")
+
+cutoff
+precision <- conf_matrix$table[2, 2] / sum(conf_matrix$table[, 2])
+recall <- conf_matrix$table[2, 2] / sum(conf_matrix$table[2, ])
+f1_score <- 2 * (precision * recall) / (precision + recall)
+
+
+print(f1_score)
+```
+
+
+```{r}
+#base model for xgboost
+library(caret)
+library(xgboost)
+predictive_feature <- c("session_id","trial_group","contrast_diff","avg_spikes","mouse_name","decision")
+
+predictive_dat <- combined_dat[predictive_feature]
+
+
+label <- as.numeric(combined_dat$success)
+X <- model.matrix(~., predictive_dat)
+
+set.seed(123)
+trainIndex <- createDataPartition(label, p = .8, 
+                                  list = FALSE, 
+                                  times = 1)
+train_df <- predictive_dat[trainIndex, ]
+train_X <- X[trainIndex,]
+test_df <- predictive_dat[-trainIndex, ]
+test_X <- X[-trainIndex,]
+
+train_label <- label[trainIndex]
+test_label <- label[-trainIndex]
+
+xgb_model <- xgboost(data = train_X, label = train_label, objective = "binary:logistic", nrounds=10)
+
+predictions <- predict(xgb_model, newdata = test_X)
+cutoff <- coords(auroc, "best", best.method = "closest.topleft")
+
+
+predicted_labels <- as.numeric(ifelse(predictions > cutoff$threshold, 1, 0))
+accuracy <- mean(predicted_labels == test_label)
+accuracy
+
+conf_matrix <- confusionMatrix(as.factor(predicted_labels), as.factor(test_label))
+conf_matrix$table
+
+auroc <- roc(test_label, predictions)
+auroc
+
+cutoff
+
+```
+
+```{r}
+#Simulation of base xgboost using session 18 samples
+set.seed(123) 
+session_18_row <- which(combined_dat$session_id==18)
+testIndex <- sample(session_18_row, 100, replace = FALSE)
+trainIndex <- 1:nrow(combined_dat)
+trainIndex <- trainIndex[!(trainIndex %in% testIndex)]
+
+train_df <- predictive_dat[trainIndex, ]
+train_X <- X[trainIndex,]
+test_df <- predictive_dat[-trainIndex, ]
+test_X <- X[-trainIndex,]
+
+train_label <- label[trainIndex]
+test_label <- label[-trainIndex]
+
+xgb_model <- xgboost(data = train_X, label = train_label, objective = "binary:logistic", nrounds=10)
+predictions <- predict(xgb_model, newdata = test_X)
+cutoff <- coords(auroc, "best", best.method = "closest.topleft")
+
+
+predicted_labels <- as.numeric(ifelse(predictions > cutoff$threshold, 1, 0))
+accuracy <- mean(predicted_labels == test_label)
+accuracy
+conf_matrix <- confusionMatrix(as.factor(predicted_labels), as.factor(test_label))
+conf_matrix$table
+auroc <- roc(test_label, predictions)
+auroc
+
+cutoff
+```
+
+```{r}
+#Simulation of trial 1 for base xgboost
+set.seed(123) 
+session_1_row <- which(combined_dat$session_id==1)
+testIndex <- sample(session_1_row, 100, replace = FALSE)
+trainIndex <- 1:nrow(combined_dat)
+trainIndex <- trainIndex[!(trainIndex %in% testIndex)]
+
+train_df <- predictive_dat[trainIndex, ]
+train_X <- X[trainIndex,]
+test_df <- predictive_dat[-trainIndex, ]
+test_X <- X[-trainIndex,]
+
+train_label <- label[trainIndex]
+test_label <- label[-trainIndex]
+
+xgb_model <- xgboost(data = train_X, label = train_label, objective = "binary:logistic", nrounds=10)
+predictions <- predict(xgb_model, newdata = test_X)
+cutoff <- coords(auroc, "best", best.method = "closest.topleft")
+
+
+predicted_labels <- as.numeric(ifelse(predictions > cutoff$threshold, 1, 0))
+accuracy <- mean(predicted_labels == test_label)
+accuracy
+conf_matrix <- confusionMatrix(as.factor(predicted_labels), as.factor(test_label))
+conf_matrix$table
+auroc <- roc(test_label, predictions)
+auroc
+
+cutoff
+```
+
+
+
+```{r}
+#using only session 1,18 for xgboost model
+filtered_data <- combined_dat %>%
+  filter(session_id %in% c(1, 18))
+dim(filtered_data)
+predictive_feature <- c("session_id","trial_group","contrast_diff","avg_spikes","mouse_name","decision")
+
+predictive_dat <- filtered_data[predictive_feature]
+
+
+label <- as.numeric(filtered_data$success)
+X <- model.matrix(~., predictive_dat)
+
+set.seed(123) 
+trainIndex <- createDataPartition(label, p = .8, 
+                                  list = FALSE, 
+                                  times = 1)
+train_df <- predictive_dat[trainIndex, ]
+train_X <- X[trainIndex,]
+test_df <- predictive_dat[-trainIndex, ]
+test_X <- X[-trainIndex,]
+
+train_label <- label[trainIndex]
+test_label <- label[-trainIndex]
+
+xgb_model <- xgboost(data = train_X, label = train_label, objective = "binary:logistic", nrounds=10)
+
+predictions <- predict(xgb_model, newdata = test_X)
+
+auroc <- roc(test_label, predictions)
+
+cutoff <- coords(auroc, "best", best.method = "closest.topleft")
+cutoff$threshold
+
+predicted_labels <- as.numeric(ifelse(predictions > cutoff$threshold, 1, 0))
+
+accuracy <- mean(predicted_labels == test_label)
+accuracy
+
+conf_matrix <- confusionMatrix(as.factor(predicted_labels), as.factor(test_label))
+conf_matrix$table
+auroc
+cutoff
+```
+
+```{r}
+#Simulation for session 18 
+set.seed(123)
+session_18_row <- which(filtered_data$session_id==18)
+testIndex <- sample(session_18_row, 100, replace = FALSE)
+trainIndex <- 1:nrow(filtered_data)
+trainIndex <- trainIndex[!(trainIndex %in% testIndex)]
+
+train_df <- predictive_dat[trainIndex, ]
+train_X <- X[trainIndex,]
+test_df <- predictive_dat[-trainIndex, ]
+test_X <- X[-trainIndex,]
+
+train_label <- label[trainIndex]
+test_label <- label[-trainIndex]
+
+xgb_model <- xgboost(data = train_X, label = train_label, objective = "binary:logistic", nrounds=10)
+predictions <- predict(xgb_model, newdata = test_X)
+cutoff <- coords(auroc, "best", best.method = "closest.topleft")
+
+cutoff$threshold
+predicted_labels <- as.numeric(ifelse(predictions > cutoff$threshold, 1, 0))
+accuracy <- mean(predicted_labels == test_label)
+accuracy
+conf_matrix <- confusionMatrix(as.factor(predicted_labels), as.factor(test_label))
+conf_matrix$table
+auroc <- roc(test_label, predictions)
+auroc
+
+
+cutoff
+```
+
+```{r}
+#Simulation for session 1
+set.seed(123) 
+session_1_row <- which(filtered_data$session_id==1)
+testIndex <- sample(session_1_row, 100, replace = FALSE)
+trainIndex <- 1:nrow(filtered_data)
+trainIndex <- trainIndex[!(trainIndex %in% testIndex)]
+
+train_df <- predictive_dat[trainIndex, ]
+train_X <- X[trainIndex,]
+test_df <- predictive_dat[-trainIndex, ]
+test_X <- X[-trainIndex,]
+
+train_label <- label[trainIndex]
+test_label <- label[-trainIndex]
+
+xgb_model <- xgboost(data = train_X, label = train_label, objective = "binary:logistic", nrounds=10)
+predictions <- predict(xgb_model, newdata = test_X)
+cutoff <- coords(auroc, "best", best.method = "closest.topleft")
+
+
+predicted_labels <- as.numeric(ifelse(predictions > cutoff$threshold, 1, 0))
+accuracy <- mean(predicted_labels == test_label)
+accuracy
+conf_matrix <- confusionMatrix(as.factor(predicted_labels), as.factor(test_label))
+conf_matrix$table
+auroc <- roc(test_label, predictions)
+auroc
+
+
+cutoff
+```
+
+
+
+
+
+```{r}
+#using only session 1:3,12:18
+filtered_data <- combined_dat %>%
+  filter(session_id %in% c(1:3,12: 18))
+predictive_feature <- c("session_id","trial_group","contrast_diff","avg_spikes","mouse_name","decision")
+
+predictive_dat <- filtered_data[predictive_feature]
+
+
+label <- as.numeric(filtered_data$success)
+X <- model.matrix(~., predictive_dat)
+
+set.seed(123) 
+trainIndex <- createDataPartition(label, p = .8, 
+                                  list = FALSE, 
+                                  times = 1)
+train_df <- predictive_dat[trainIndex, ]
+train_X <- X[trainIndex,]
+test_df <- predictive_dat[-trainIndex, ]
+test_X <- X[-trainIndex,]
+
+train_label <- label[trainIndex]
+test_label <- label[-trainIndex]
+
+xgb_model <- xgboost(data = train_X, label = train_label, objective = "binary:logistic", nrounds=10)
+
+predictions <- predict(xgb_model, newdata = test_X)
+cutoff <- coords(auroc, "best", best.method = "closest.topleft")
+
+
+predicted_labels <- as.numeric(ifelse(predictions > cutoff$threshold, 1, 0))
+accuracy <- mean(predicted_labels == test_label)
+accuracy
+
+conf_matrix <- confusionMatrix(as.factor(predicted_labels), as.factor(test_label))
+conf_matrix$table
+
+auroc <- roc(test_label, predictions)
+auroc
+
+
+cutoff
+```
+
+```{r}
+#Simulation for sample 18
+set.seed(123) 
+session_18_row <- which(filtered_data$session_id==18)
+testIndex <- sample(session_18_row, 100, replace = FALSE)
+trainIndex <- 1:nrow(filtered_data)
+trainIndex <- trainIndex[!(trainIndex %in% testIndex)]
+
+train_df <- predictive_dat[trainIndex, ]
+train_X <- X[trainIndex,]
+test_df <- predictive_dat[-trainIndex, ]
+test_X <- X[-trainIndex,]
+
+train_label <- label[trainIndex]
+test_label <- label[-trainIndex]
+
+xgb_model <- xgboost(data = train_X, label = train_label, objective = "binary:logistic", nrounds=10)
+predictions <- predict(xgb_model, newdata = test_X)
+cutoff <- coords(auroc, "best", best.method = "closest.topleft")
+
+
+predicted_labels <- as.numeric(ifelse(predictions > cutoff$threshold, 1, 0))
+accuracy <- mean(predicted_labels == test_label)
+accuracy
+conf_matrix <- confusionMatrix(as.factor(predicted_labels), as.factor(test_label))
+conf_matrix$table
+auroc <- roc(test_label, predictions)
+auroc
+
+
+cutoff
+
+```
+
+
+
+
+
+```{r}
+#Simulation for session 1
+set.seed(123) 
+session_18_row <- which(filtered_data$session_id==1)
+testIndex <- sample(session_18_row, 100, replace = FALSE)
+trainIndex <- 1:nrow(filtered_data)
+trainIndex <- trainIndex[!(trainIndex %in% testIndex)]
+
+train_df <- predictive_dat[trainIndex, ]
+train_X <- X[trainIndex,]
+test_df <- predictive_dat[-trainIndex, ]
+test_X <- X[-trainIndex,]
+
+train_label <- label[trainIndex]
+test_label <- label[-trainIndex]
+
+xgb_model <- xgboost(data = train_X, label = train_label, objective = "binary:logistic", nrounds=10)
+predictions <- predict(xgb_model, newdata = test_X)
+cutoff <- coords(auroc, "best", best.method = "closest.topleft")
+
+
+predicted_labels <- as.numeric(ifelse(predictions > cutoff$threshold, 1, 0))
+accuracy <- mean(predicted_labels == test_label)
+accuracy
+conf_matrix <- confusionMatrix(as.factor(predicted_labels), as.factor(test_label))
+conf_matrix$table
+auroc <- roc(test_label, predictions)
+auroc
+
+
+cutoff
+```
+
+
+```{r}
+#Simulation
+testing_data <- list()
+for (i in 1:2) {
+  testing_data[[i]] <- readRDS(paste('./Test/test', i, '.rds', sep=''))
+}
+
+
+
+```
+
+
+
+```{r}
+average_spike_session <- function(i.s, testing_data) {
+  num_trials <- length(testing_data[[i.s]]$spks)
+  area <- testing_data[[i.s]]$brain_area
+  
+  spk_count_accumulated <- numeric(length = length(area))
+  
+  for (i in 1:num_trials) {
+    spk_trial <- testing_data[[i.s]]$spks[[i]]
+    spk_count <- apply(spk_trial, 1, sum)
+    spk_count_accumulated <- spk_count_accumulated + spk_count
+  }
+  
+  spk_average <- sum(tapply(spk_count_accumulated, area, mean))
+  
+  return(spk_average)
+}
+
+average_spike_per_session <- function(i.s, this_session) {
+  num_trials <- length(this_session$spks)  
+  area <- this_session$brain_area
+  
+  spk_count_accumulated <- numeric(length = length(area))
+  
+  for (i in 1:num_trials) {
+    spk_trial <- this_session$spks[[i]]
+    spk_count <- apply(spk_trial, 1, sum)  
+    spk_count_accumulated <- spk_count_accumulated + spk_count
+  }
+  
+  spk_mean <- tapply(spk_count_accumulated, area, mean)
+  
+  return(spk_mean)
+}
+
+# Example usage
+average_spike_session(1, testing_data)
+average_spike_per_session(1, testing_data[[1]])
+
+
+```
+
+```{r}
+calculate_spikes_session <- function(testing_data) {
+  n_obs <- length(testing_data$feedback_type)
+  
+  dat <- tibble(
+    feedback_type = as.factor(testing_data$feedback_type),
+    decision = rep('name', n_obs),
+    avg_spikes = rep(0, n_obs),
+    total_spikes = rep(0, n_obs)
+  )
+  
+  for (i in 1:n_obs) {
+    # Determine decision based on contrasts (assuming these are available in testing_data)
+    if (testing_data$contrast_left[i] > testing_data$contrast_right[i]) {
+      dat$decision[i] <- '1' 
+    } else if (testing_data$contrast_left[i] < testing_data$contrast_right[i]) {
+      dat$decision[i] <- '2' 
+    } else if (testing_data$contrast_left[i] == testing_data$contrast_right[i] &
+                 testing_data$contrast_left[i] == 0) {
+      dat$decision[i] <- '3' 
+    } else {
+      dat$decision[i] <- '4' 
+    }
+    
+    spks.trial <- testing_data$spks[[i]]
+    total.spikes <- rowSums(spks.trial)
+    
+    dat$total_spikes[i] <- sum(total.spikes)
+    dat$avg_spikes[i] <- mean(total.spikes)
+  }
+  
+  dat$decision <- as.factor(dat$decision)
+  
+  return(list(avg_spikes = mean(dat$avg_spikes), total_spikes = sum(dat$total_spikes)))
+}
+
+# Assuming you have a list of sessions named session_data
+session_number <- 1 
+result <- calculate_spikes_session(testing_data[[session_number]])
+
+print(result$avg_spikes)
+print(result$total_spikes / session_number)
+
+
+```
+
+```{r}
+library(tidyverse)
+
+
+n.session=length(testing_data)
+
+meta <- tibble(
+  mouse_name = rep('name',n.session),
+  date_exp =rep('dt',n.session),
+  n_brain_area = rep(0,n.session),
+  n_neurons = rep(0,n.session),
+  n_trials = rep(0,n.session),
+  success_rate = rep(0,n.session),
+  spike_number = rep(0,n.session),
+  average_spike=rep(0,n.session),
+  spike_per_area=rep(0,n.session)
+  
+
+)
+
+
+for(i in 1:n.session){
+  tmp = testing_data[[i]];
+  meta[i,1]=tmp$mouse_name;
+  meta[i,2]=tmp$date_exp;
+  meta[i,3]=length(unique(tmp$brain_area));
+  meta[i,4]=dim(tmp$spks[[1]])[1];
+  meta[i,5]=length(tmp$feedback_type);
+  meta[i,6]=mean(tmp$feedback_type+1)/2;
+  spike_info<-calculate_spikes_session(tmp)
+  meta[i, "spike_number"] <-( spike_info$total_spikes/meta[i,"n_trials"]);
+  
+  meta[i, "average_spike"] <- spike_info$avg_spikes;
+  meta[i, "spike_per_area"]<-meta[i,"spike_number"]/meta[i,"n_brain_area"];
+
+  
+}
+ 
+
+
+
+
+library(knitr)
+# In package knitr
+
+library(dplyr)
+meta %>% rename(brain_area = n_brain_area, neuron_count = n_neurons,trial_count = n_trials )
+
+summary(meta$success_rate)
+summary(meta$average_spike)
+summary(meta$spike_number)
+```
+
+
+```{r}
+calculate_spikes_trial <- function(testing_data, i.t) {
+  n_obs <- length(testing_data$feedback_type)
+  
+  dat <- tibble(
+    feedback_type = as.factor(testing_data$feedback_type),
+    decision = rep('name', n_obs),
+    avg_spikes = rep(0, n_obs),
+    total_spikes = rep(0, n_obs)
+  )
+  
+  for (i in 1:n_obs) {
+    # Determine decision based on contrasts
+    if (testing_data$contrast_left[i] > testing_data$contrast_right[i]) {
+      dat$decision[i] <- '1' 
+    } else if (testing_data$contrast_left[i] < testing_data$contrast_right[i]) {
+      dat$decision[i] <- '2' 
+    } else if (testing_data$contrast_left[i] == testing_data$contrast_right[i] &
+                 testing_data$contrast_left[i] == 0) {
+      dat$decision[i] <- '3' 
+    } else {
+      dat$decision[i] <- '4' 
+    }
+    
+    spks.trial <- testing_data$spks[[i]]
+    total.spikes <- apply(spks.trial, 1, sum)
+    
+    dat$total_spikes[i] <- sum(total.spikes)
+    dat$avg_spikes[i] <- mean(total.spikes)
+  }
+  
+  dat$decision <- as.factor(dat$decision)
+  
+  return(dat)
+}
+
+session_number <- 1  
+result <- calculate_spikes_trial(testing_data[[session_number]])
+
+print(result)
+
+n.session=length(testing_data)
+
+n_success = 0
+n_trial = 0
+for(i in 1:n.session){
+    tmp = testing_data[[i]];
+    n_trial = n_trial + length(tmp$feedback_type);
+    n_success = n_success + sum(tmp$feedback_type == 1);
+}
+n_success/n_trial
+
+area = c()
+for(i in 1:n.session){
+    tmp = session[[i]];
+    area = c(area, unique(tmp$brain_area))
+}
+
+area = unique(area)
+length(area)
+```
+
+```{r}
+#New table with contrast differences trial group
+calculate_spikes_trial <- function(testing_data, i.s) {
+  n_obs <- length(testing_data$feedback_type)
+  
+  dat <- tibble(
+    session_id = rep(i.s, n_obs),
+    mouse_name = rep(testing_data$mouse_name[1], n_obs),
+    trial_id = 1:n_obs,
+    feedback_type = as.factor(testing_data$feedback_type),
+    decision = rep('name', n_obs),
+    avg_spikes = rep(0, n_obs),
+    left_contrast = testing_data$contrast_left,
+    right_contrast = testing_data$contrast_right,
+    contrast_diff = abs(testing_data$contrast_left - testing_data$contrast_right),
+    trial_group = cut(1:n_obs, breaks = seq(0, n_obs + 50, by = 25), include.lowest = TRUE)
+  )
+  
+  for (i in 1:n_obs) {
+    # Determine decision based on contrasts
+    if (testing_data$contrast_left[i] > testing_data$contrast_right[i]) {
+      dat$decision[i] <- '1' 
+    } else if (testing_data$contrast_left[i] < testing_data$contrast_right[i]) {
+      dat$decision[i] <- '2' 
+    } else if (testing_data$contrast_left[i] == testing_data$contrast_right[i] &
+                 testing_data$contrast_left[i] == 0) {
+      dat$decision[i] <- '3' 
+    } else {
+      dat$decision[i] <- '4' 
+    }
+    dat$left_contrast[i] <- testing_data$contrast_left[i]
+    dat$right_contrast[i] <- testing_data$contrast_right[i]
+    dat$contrast_diff[i] <- abs(dat$left_contrast[i] - dat$right_contrast[i])
+    
+    spks.trial <- testing_data$spks[[i]]
+    total.spikes <- apply(spks.trial, 1, sum)
+    dat$avg_spikes[i] <- mean(total.spikes)
+
+    dat$success <- dat$feedback_type == 1
+dat$success <- as.numeric(dat$success)
+ 
+                              
+  }
+  
+  dat$decision <- as.factor(dat$decision)
+  
+  return(dat)
+}
+
+# Example usage:
+calculate_spikes_trial(testing_data[[1]], 1)
+calculate_spikes_trial(testing_data[[2]], 2)
+```
+
+```{r}
+result_list <- lapply(1:2, function(i) calculate_spikes_trial(testing_data[[i]], i))
+
+combined_dat <- bind_rows(result_list)
+combined_dat %>% group_by(mouse_name) %>% summarize(success_rate = mean(success, na.rm = TRUE))
+head(combined_dat)
+combined_dat%>% group_by(contrast_diff) %>% summarize(success_rate = mean(success, na.rm = TRUE))
+
+counts_df <- combined_dat[c('mouse_name', 'contrast_diff')]
+counts_df$contrast_diff <- as.factor(counts_df$contrast_diff)
+counts <- table(counts_df)
+
+percentages <- prop.table(counts, margin = 1)
+
+```
+
+
+```{r}
+combined_dat$trial_group = cut(combined_dat$trial_id, breaks = seq(0, max(combined_dat$trial_id), by = 25),include.lowest = TRUE)
+levels(combined_dat$trial_group) <- seq(0, max(combined_dat$trial_id), by = 25)[2:18]
+combined_dat %>% group_by(trial_group) %>% summarize(success_rate = mean(success, na.rm = TRUE))
+
+combined_dat$trial_group <- as.factor(combined_dat$trial_group)
+combined_dat
+
+```
+
+```{r}
+predictive_feature <- c("session_id","trial_group","contrast_diff","avg_spikes","mouse_name","decision")
+
+predictive_dat <- combined_dat[predictive_feature]
+
+
+label <- as.numeric(combined_dat$success)
+X <- model.matrix(~., predictive_dat)
+
+set.seed(123)
+trainIndex <- createDataPartition(label, p = .8, 
+                                  list = FALSE, 
+                                  times = 1)
+train_df <- predictive_dat[trainIndex, ]
+train_X <- X[trainIndex,]
+test_df <- predictive_dat[-trainIndex, ]
+test_X <- X[-trainIndex,]
+
+train_label <- label[trainIndex]
+test_label <- label[-trainIndex]
+
+xgb_model <- xgboost(data = train_X, label = train_label, objective = "binary:logistic", nrounds=10)
+
+predictions <- predict(xgb_model, newdata = test_X)
+cutoff <- coords(auroc, "best", best.method = "closest.topleft")
+
+
+predicted_labels <- as.numeric(ifelse(predictions > cutoff$threshold, 1, 0))
+accuracy <- mean(predicted_labels == test_label)
+accuracy
+
+conf_matrix <- confusionMatrix(as.factor(predicted_labels), as.factor(test_label))
+conf_matrix$table
+
+auroc <- roc(test_label, predictions)
+auroc
+
+cutoff
+
+```
+
+```{r}
+#Session 1 simulation
+set.seed(123)
+session_1_row <- which(combined_dat$session_id==1)
+testIndex <- sample(session_1_row, 100, replace = FALSE)
+trainIndex <- 1:nrow(combined_dat)
+trainIndex <- trainIndex[!(trainIndex %in% testIndex)]
+
+train_df <- predictive_dat[trainIndex, ]
+train_X <- X[trainIndex,]
+test_df <- predictive_dat[-trainIndex, ]
+test_X <- X[-trainIndex,]
+
+train_label <- label[trainIndex]
+test_label <- label[-trainIndex]
+
+xgb_model <- xgboost(data = train_X, label = train_label, objective = "binary:logistic", nrounds=10)
+predictions <- predict(xgb_model, newdata = test_X)
+cutoff <- coords(auroc, "best", best.method = "closest.topleft")
+
+
+predicted_labels <- as.numeric(ifelse(predictions > 0.3, 1, 0))
+accuracy <- mean(predicted_labels == test_label)
+accuracy
+conf_matrix <- confusionMatrix(as.factor(predicted_labels), as.factor(test_label))
+conf_matrix$table
+auroc <- roc(test_label, predictions)
+auroc
+
+cutoff
+```
+
+```{r}
+#Session 18 simulation
+set.seed(123)
+session_18_row <- which(combined_dat$session_id==2)
+testIndex <- sample(session_18_row, 100, replace = FALSE)
+trainIndex <- 1:nrow(combined_dat)
+trainIndex <- trainIndex[!(trainIndex %in% testIndex)]
+
+train_df <- predictive_dat[trainIndex, ]
+train_X <- X[trainIndex,]
+test_df <- predictive_dat[-trainIndex, ]
+test_X <- X[-trainIndex,]
+
+train_label <- label[trainIndex]
+test_label <- label[-trainIndex]
+
+xgb_model <- xgboost(data = train_X, label = train_label, objective = "binary:logistic", nrounds=10)
+predictions <- predict(xgb_model, newdata = test_X)
+cutoff <- coords(auroc, "best", best.method = "closest.topleft")
+
+
+predicted_labels <- as.numeric(ifelse(predictions > 0.3, 1, 0))
+accuracy <- mean(predicted_labels == test_label)
+accuracy
+conf_matrix <- confusionMatrix(as.factor(predicted_labels), as.factor(test_label))
+conf_matrix$table
+auroc <- roc(test_label, predictions)
+auroc
+
+cutoff
+```
+
+```{r}
+#using only session 1:3,12:18
+filtered_data <- combined_dat %>%
+  filter(session_id %in% c(1:3,12: 18))
+predictive_feature <- c("session_id","trial_group","contrast_diff","avg_spikes","mouse_name","decision")
+
+predictive_dat <- filtered_data[predictive_feature]
+
+
+label <- as.numeric(filtered_data$success)
+X <- model.matrix(~., predictive_dat)
+
+set.seed(123) 
+trainIndex <- createDataPartition(label, p = .8, 
+                                  list = FALSE, 
+                                  times = 1)
+train_df <- predictive_dat[trainIndex, ]
+train_X <- X[trainIndex,]
+test_df <- predictive_dat[-trainIndex, ]
+test_X <- X[-trainIndex,]
+
+train_label <- label[trainIndex]
+test_label <- label[-trainIndex]
+
+xgb_model <- xgboost(data = train_X, label = train_label, objective = "binary:logistic", nrounds=10)
+
+predictions <- predict(xgb_model, newdata = test_X)
+cutoff <- coords(auroc, "best", best.method = "closest.topleft")
+
+
+predicted_labels <- as.numeric(ifelse(predictions > cutoff$threshold, 1, 0))
+accuracy <- mean(predicted_labels == test_label)
+accuracy
+
+conf_matrix <- confusionMatrix(as.factor(predicted_labels), as.factor(test_label))
+conf_matrix$table
+
+auroc <- roc(test_label, predictions)
+auroc
+
+
+cutoff
+```
+
+```{r}
+set.seed(123) 
+session_18_row <- which(filtered_data$session_id==1)
+testIndex <- sample(session_18_row, 100, replace = FALSE)
+trainIndex <- 1:nrow(filtered_data)
+trainIndex <- trainIndex[!(trainIndex %in% testIndex)]
+
+train_df <- predictive_dat[trainIndex, ]
+train_X <- X[trainIndex,]
+test_df <- predictive_dat[-trainIndex, ]
+test_X <- X[-trainIndex,]
+
+train_label <- label[trainIndex]
+test_label <- label[-trainIndex]
+
+xgb_model <- xgboost(data = train_X, label = train_label, objective = "binary:logistic", nrounds=10)
+predictions <- predict(xgb_model, newdata = test_X)
+cutoff <- coords(auroc, "best", best.method = "closest.topleft")
+
+
+predicted_labels <- as.numeric(ifelse(predictions > 0.3, 1, 0))
+accuracy <- mean(predicted_labels == test_label)
+accuracy
+conf_matrix <- confusionMatrix(as.factor(predicted_labels), as.factor(test_label))
+conf_matrix$table
+auroc <- roc(test_label, predictions)
+auroc
+
+
+cutoff
+
+set.seed(123) 
+session_18_row <- which(filtered_data$session_id==2)
+testIndex <- sample(session_18_row, 100, replace = FALSE)
+trainIndex <- 1:nrow(filtered_data)
+trainIndex <- trainIndex[!(trainIndex %in% testIndex)]
+
+train_df <- predictive_dat[trainIndex, ]
+train_X <- X[trainIndex,]
+test_df <- predictive_dat[-trainIndex, ]
+test_X <- X[-trainIndex,]
+
+train_label <- label[trainIndex]
+test_label <- label[-trainIndex]
+
+xgb_model <- xgboost(data = train_X, label = train_label, objective = "binary:logistic", nrounds=10)
+predictions <- predict(xgb_model, newdata = test_X)
+cutoff <- coords(auroc, "best", best.method = "closest.topleft")
+
+
+predicted_labels <- as.numeric(ifelse(predictions > 0.3, 1, 0))
+accuracy <- mean(predicted_labels == test_label)
+accuracy
+conf_matrix <- confusionMatrix(as.factor(predicted_labels), as.factor(test_label))
+conf_matrix$table
+auroc <- roc(test_label, predictions)
+auroc
+
+
+cutoff
+```
+
+
+
+# Project report outline 
+
+The final submission of the course project is a report in HTML format, along with a link to the Github repository that can be used to reproduce your report. The project report must be legible and the exposition of the report is part of the grading rubrics. For consistency in grading, please follow the outline listed below. 
+
+- Title.
+
+- Abstract (5 pts).
+
+- Section 1 Introduction (5 pts). 
+
+- Section 2 Exploratory analysis (20 pts). 
+
+- Section 3 Data integration (20 pts). 
+
+- Section 4 Predictive modeling (20 pts). 
+
+- Section 5 Prediction performance on the test sets (5 pts). 
+
+- Section 6 Discussion (5 pts). 
+
+In addition, the remaining 20 points will be allocated to report organization and legibility and creativity and originality. 
+
+
+# Project milestones
+
+A series of milestones are set throughout the quarter in order to encourage, and reward, early starts on the course project. Furthermore, there are several project discussion sessions throughout the quarter for students to utilize. 
+
+
+- Project proposal January 26th (optional): 0 points. Students are **strongly recommended** to attend the project discussion during the regular lecture time on Zoom. 
+- Milestone I February 9th  (optional): 0 points but eligible for bonus points for outstanding progress or novel findings. Draft analysis and results for Part I visualization. Students are **recommended** to attend the optional project discussion during the regular lecture time on Zoom. 
+- Milestone II March 1st (optional): 0 points but eligible for bonus points for outstanding progress or novel findings. Draft analysis and results for Part II data integration. Students are **recommended** to attend the optional project discussion during the regular lecture time on Zoom. 
+- March 18th Project report: 60 points. Students are **strongly recommended** to attend at least one project consulting session in Week 10. 
+
+
+**Remark**: One important thing to note is that a course project is not an exam where questions on the exam are kept confidential. Instead, the instructor and TAs are more than happy to share with you our thoughts on how to improve your projects before you submit them. From a practical perspective, it is more rewarding to solicit advice and suggestions before we grade your reports than to wait for feedback afterwards. That said, we understand that you may have other courses and obligations that are more important than this course. Therefore, all submissions and attendance are optional except for the final project report due on June 12th.
+
+# Reference {-}
+
+
+Steinmetz, N.A., Zatka-Haas, P., Carandini, M. et al. Distributed coding of choice, action and engagement across the mouse brain. Nature 576, 266–273 (2019). https://doi.org/10.1038/s41586-019-1787-x
+
+# Reference
+
+how would you write a logistic regression model in r
+
+ChatGPT
+You can write a logistic regression model in R using the glm() function, which stands for Generalized Linear Model. Here's an example of how you can do it:
+
+R
+Copy code
+# Sample data
+set.seed(123)
+n <- 100
+x <- rnorm(n)
+logit <- 1 + 2 * x
+y <- rbinom(n, 1, plogis(logit))
+
+# Fit logistic regression model
+model <- glm(y ~ x, family = binomial(link = "logit"))
+
+# Summary of the model
+summary(model)
+In this example:
+
+y is your binary response variable.
+x is your predictor variable.
+family = binomial(link = "logit") specifies that you're fitting a logistic regression model with a logit link function.
+You can replace y ~ x with your actual formula if you have more predictors or interactions in your model. After fitting the model, you can use summary(model) to see the summary output, including coefficients, standard errors, z-values, and p-values.
+
+User
+how would you plot the roc curve and get a cutoff value?
+ChatGPT
+To plot the ROC (Receiver Operating Characteristic) curve and determine the cutoff value in R, you can follow these steps using the ROCR package for ROC curve computation and visualization:
+
+Install and load the ROCR package if you haven't already:
+R
+Copy code
+install.packages("ROCR")
+library(ROCR)
+Predict probabilities using your logistic regression model (model):
+R
+Copy code
+# Predict probabilities
+predictions <- predict(model, type = "response")
+Create a prediction object for the ROC curve:
+R
+Copy code
+# Create prediction object
+prediction_obj <- prediction(predictions, y)
+Compute the ROC curve:
+R
+Copy code
+# Compute ROC curve
+roc_obj <- performance(prediction_obj, "tpr", "fpr")
+Plot the ROC curve:
+R
+Copy code
+# Plot ROC curve
+plot(roc_obj, main = "ROC Curve", col = "blue")
+abline(a = 0, b = 1, lty = 2, col = "red")
+Calculate the optimal cutoff value:
+R
+Copy code
+# Calculate optimal cutoff value
+cutoff_index <- which.max(roc_obj@y.values[[1]] - roc_obj@x.values[[1]])
+optimal_cutoff <- roc_obj@alpha.values[[1]][cutoff_index]
+Display the ROC curve and optimal cutoff point:
+R
+Copy code
+# Add optimal cutoff point to the ROC curve plot
+points(roc_obj@x.values[[1]][cutoff_index], roc_obj@y.values[[1]][cutoff_index],
+       col = "red", pch = 19)
+text(roc_obj@x.values[[1]][cutoff_index] + 0.1, roc_obj@y.values[[1]][cutoff_index],
+     paste("Cutoff =", round(optimal_cutoff, 2)), col = "red")
+This code will plot the ROC curve and display the optimal cutoff value on the plot. Adjust the plot title (main = "ROC Curve") and other plot parameters as needed.
+
+User
+for the logistic model
+ChatGPT
+Here's how you can plot the ROC curve and determine the cutoff value specifically for a logistic regression model in R:
+
+R
+Copy code
+# Load necessary packages
+install.packages("pROC")  # Install pROC package if you haven't already
+library(pROC)
+
+# Sample data (replace with your data)
+set.seed(123)
+n <- 100
+x <- rnorm(n)
+logit <- 1 + 2 * x
+y <- rbinom(n, 1, plogis(logit))
+
+# Fit logistic regression model
+model <- glm(y ~ x, family = binomial(link = "logit"))
+
+# Predict probabilities
+predictions <- predict(model, type = "response")
+
+# Compute ROC curve and AUC
+roc_obj <- roc(y, predictions)
+
+# Plot ROC curve
+plot(roc_obj, main = "ROC Curve", col = "blue")
+abline(a = 0, b = 1, lty = 2, col = "red")
+
+# Calculate optimal cutoff value
+cutoff_index <- which.max(roc_obj$sensitivities - (1 - roc_obj$specificities))
+optimal_cutoff <- roc_obj$thresholds[cutoff_index]
+
+# Add optimal cutoff point to the ROC curve plot
+points(1 - roc_obj$specificities[cutoff_index], roc_obj$sensitivities[cutoff_index],
+       col = "red", pch = 19)
+text(1 - roc_obj$specificities[cutoff_index] + 0.1, roc_obj$sensitivities[cutoff_index],
+     paste("Cutoff =", round(optimal_cutoff, 2)), col = "red")
+This code uses the pROC package to compute the ROC curve and AUC (Area Under the Curve) for your logistic regression model. It then plots the ROC curve and calculates the optimal cutoff value based on the Youden's J statistic (maximizing sensitivity + specificity - 1). Adjust the sample data and plot parameters as needed for your specific use case.
+
+
